@@ -1,38 +1,44 @@
-name: Update Lists
+name: Update Proxy Lists
 
 on:
   schedule:
-    - cron: '0 */12 * * *'
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    # Запуск в 00:00 и 12:00 по Москве (UTC+3)
+    # В UTC это 21:00 предыдущего дня и 09:00 текущего дня
+    - cron: '0 9,21 * * *'
+  workflow_dispatch:   # ручной запуск
+  push:
+    branches:
+      - main
+    paths:
+      - 'sources/sources.txt'
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Set up Python
+    permissions:
+      contents: write
+
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install dependencies
+      - name: 📦 Install dependencies
         run: pip install requests
 
-      - name: Run parser
-        run: python blacklist_parser.py
+      - name: 🚀 Run parser
+        run: python parser.py
 
-      - name: Commit & Push
+      - name: 📊 Commit & Push changes
         run: |
           git config --global user.name "Kfg Bot"
-          git config --global user.email "bot@kfg.dev"
-          git add public/ stats.json README.md
-          if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -m "🔄 Update $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
-          fi
+          git config --global user.email "bot@kfg.example.com"
+          git add public/sub.txt public/sub_ios.txt public/sub_singbox.json public/stats.json
+          git commit -m "🔄 Update proxy lists $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "No changes to commit"
+          git push
