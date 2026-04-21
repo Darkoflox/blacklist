@@ -1,86 +1,69 @@
 import requests
-import datetime
-import sys
+import base64
+import os
 
-# Список самых надежных и обновляемых источников в мире
-# Если первый упадет, скрипт автоматически попробует следующий
-URLS = [
-    "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
-    "https://adaway.org/hosts.txt",
-    "https://someonewhocares.org/hosts/hosts"
+# Ссылки по умолчанию (на случай, если файла sources.txt нет)
+DEFAULT_SOURCES = [
+    "https://raw.githubusercontent.com/mfuu/v2ray/master/v2ray",
+    "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub"
 ]
 
-hosts_content = None
+# Поддерживаемые протоколы
+SUPPORTED_PROTOCOLS = ('vmess://', 'vless://', 'ss://', 'ssr://', 'trojan://', 'tuic://', 'hysteria2://')
 
-# Пытаемся скачать список, перебирая источники
-for url in URLS:
+def decode_base64_content(content):
+    """Пытается декодировать Base64. Если не выходит, возвращает как обычный текст."""
     try:
-        print(f"Попытка загрузки из: {url}")
-        # Устанавливаем timeout 10 секунд, чтобы скрипт не зависал бесконечно
-        response = requests.get(url, timeout=10)
-        response.raise_for_status() # Проверка на 404 и другие ошибки
-        hosts_content = response.text
-        print("Успешно загружено!")
-        break  # Если успешно скачали, выходим из цикла поиска
-    except requests.exceptions.RequestException as e:
-        print(f"Ошибка при загрузке {url}: {e}")
+        # Добавляем выравнивание для корректного декодирования Base64
+        padded = content.strip() + '=' * (-len(content.strip()) % 4)
+        return base64.b64decode(padded).decode('utf-8', errors='ignore')
+    except Exception:
+        return content
 
-# Если все ссылки из списка перестали работать (что маловероятно)
-if not hosts_content:
-    print("Критическая ошибка: Не удалось загрузить ни один из списков.")
-    sys.exit(1) # Завершаем с ошибкой, чтобы Github Actions загорелся красным
-
-lines = hosts_content.splitlines()
-domains = set() # Используем set (множество) для автоматического удаления дубликатов
-
-# Список системных доменов, которые категорически нельзя блокировать
-WHITELIST = {
-    'localhost', 'localhost.localdomain', 'local',
-    'broadcasthost', 'ip6-localhost', 'ip6-loopback',
-    '0.0.0.0'
-}
-
-# Извлекаем домены
-for line in lines:
-    line = line.strip()
-    # Пропускаем пустые строки и строки, начинающиеся с комментария
-    if not line or line.startswith('#'):
-        continue
+def main():
+    urls = []
     
-    # Отрезаем комментарии, если они написаны после домена (разделитель #)
-    line = line.split('#')[0].strip()
+    # Читаем ссылки из специального файла sources.txt, если он существует
+    if os.path.exists("sources.txt"):
+        with open("sources.txt", "r", encoding="utf-8") as f:
+            urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
     
-    parts = line.split()
-    # Ищем строки, где есть как минимум IP и домен
-    if len(parts) >= 2:
-        ip = parts[0]
-        domain = parts[1].lower() # Приводим к нижнему регистру
-        
-        # Берем только блокирующие записи
-        if ip in ['0.0.0.0', '127.0.0.1'] and domain not in WHITELIST:
-            domains.add(domain)
+    # Если файл пуст или его нет, используем дефолтные источники
+    if not urls:
+        print("Файл sources.txt не найден или пуст. Используем источники по умолчанию.")
+        urls = DEFAULT_SOURCES
 
-# Сортируем список по алфавиту для удобства и красивых коммитов в Git
-sorted_domains = sorted(list(domains))
+    proxies = set()
 
-# Получаем текущую дату и время
-current_datetime = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+    for url in urls:
+        print(f"Парсинг подписки: {url}")
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            
+            # Декодируем содержимое
+            decoded_text = decode_base64_content(response.text)
+            
+            # Ищем строки с VPN-протоколами
+            for line in decoded_text.splitlines():
+                line = line.strip()
+                if line.startswith(SUPPORTED_PROTOCOLS):
+                    proxies.add(line)
+                    
+        except Exception as e:
+            print(f"Ошибка при обработке {url}: {e}")
 
-# Формируем итоговый текст с заголовком
-output_content = f"""# Title: BlockList
-# Description: This is a list of domains to be blocked, updated on {current_datetime}
-# Last modified: {current_datetime}
-# Expires: 1 day (server time)
-# Domain count: {len(sorted_domains)}
-#==================================================================\n"""
-output_content += "\n".join(sorted_domains)
+    # Сохраняем в открытом виде (построчно)
+    with open("proxies.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(proxies))
+    
+    # Сохраняем в формате Base64 (стандартный формат для большинства VPN-клиентов)
+    encoded_proxies = base64.b64encode("\n".join(proxies).encode('utf-8')).decode('utf-8')
+    with open("sub.txt", "w", encoding="utf-8") as f:
+        f.write(encoded_proxies)
 
-# Записываем результат в файл
-try:
-    with open("blacklist.txt", "w", encoding="utf-8") as file:
-        file.write(output_content)
-    print(f"Готово! Файл blacklist.txt успешно сгенерирован.")
-    print(f"Всего уникальных доменов добавлено: {len(sorted_domains)}")
-except IOError as e:
-    print(f"Ошибка при сохранении файла: {e}")
-    sys.exit(1)
+    print(f"\nУспешно собрано уникальных серверов: {len(proxies)}")
+    print("Результаты сохранены в файлы: 'proxies.txt' (текст) и 'sub.txt' (Base64).")
+
+if __name__ == "__main__":
+    main()
