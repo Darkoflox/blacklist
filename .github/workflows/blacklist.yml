@@ -2,10 +2,9 @@ name: Update Proxy Lists
 
 on:
   schedule:
-    # Запуск в 00:00 и 12:00 по Москве (UTC+3)
-    # В UTC это 21:00 предыдущего дня и 09:00 текущего дня
+    # Запуск в 00:00 и 12:00 по Москве (UTC+3) → 21:00 и 09:00 UTC
     - cron: '0 9,21 * * *'
-  workflow_dispatch:   # ручной запуск
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -34,6 +33,19 @@ jobs:
 
       - name: 🚀 Run parser
         run: python parser.py
+
+      - name: 🔄 Update README with stats
+        run: |
+          TOTAL=$(jq -r .total public/stats.json)
+          LAST_UPDATE=$(jq -r .last_update public/stats.json)
+          # Экранируем пробелы для URL в badge
+          LAST_UPDATE_URL=$(echo "$LAST_UPDATE" | sed 's/ /%20/g')
+          # Замена плейсхолдеров в README.md
+          sed -i "s|{{date}}|$LAST_UPDATE_URL|g" README.md
+          sed -i "s|{{total_android}}|$TOTAL|g" README.md
+          sed -i "s|{{last_update}}|$LAST_UPDATE|g" README.md
+          # Добавляем изменённый README в коммит
+          git add README.md
 
       - name: 📊 Commit & Push changes
         run: |
