@@ -1,8 +1,8 @@
-name: Blacklist Parser (ЧС)
+name: Update Lists
 
 on:
   schedule:
-    - cron: '0 */12 * * *'   # каждые 12 часов
+    - cron: '0 */12 * * *'
   workflow_dispatch:
 
 permissions:
@@ -22,17 +22,17 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Run Blacklist Parser
+      - name: Run parser
         run: python blacklist_parser.py
 
       - name: Commit & Push
         run: |
           git config --global user.name "Kfg Bot"
           git config --global user.email "bot@kfg.dev"
-          git add public/sub_black.txt public/sub_ios_black.txt public/sub_singbox_black.json public/stats_black.json
+          git add public/ stats.json README.md
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "🔄 Blacklist (ЧС) update $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git commit -m "🔄 Update $(date -u +'%Y-%m-%d %H:%M UTC')"
             git push
           fi
