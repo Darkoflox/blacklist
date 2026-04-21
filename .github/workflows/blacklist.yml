@@ -2,8 +2,7 @@ name: Update Proxy Lists
 
 on:
   schedule:
-    # Запуск в 00:00 и 12:00 по Москве (UTC+3) → 21:00 и 09:00 UTC
-    - cron: '0 9,21 * * *'
+    - cron: '0 9,21 * * *'   # 00:00 и 12:00 МСК
   workflow_dispatch:
   push:
     branches:
@@ -26,25 +25,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
+          # убираем cache: 'pip', чтобы не требовался requirements.txt
+      
       - name: 📦 Install dependencies
         run: pip install requests
 
       - name: 🚀 Run parser
-        run: python parser.py
+        run: python parser.py   # убедись, что файл называется именно так
+        continue-on-error: false  # явно говорим, что ошибка здесь должна останавливать выполнение
 
       - name: 🔄 Update README with stats
         run: |
           TOTAL=$(jq -r .total public/stats.json)
           LAST_UPDATE=$(jq -r .last_update public/stats.json)
-          # Экранируем пробелы для URL в badge
           LAST_UPDATE_URL=$(echo "$LAST_UPDATE" | sed 's/ /%20/g')
-          # Замена плейсхолдеров в README.md
           sed -i "s|{{date}}|$LAST_UPDATE_URL|g" README.md
           sed -i "s|{{total_android}}|$TOTAL|g" README.md
           sed -i "s|{{last_update}}|$LAST_UPDATE|g" README.md
-          # Добавляем изменённый README в коммит
           git add README.md
 
       - name: 📊 Commit & Push changes
