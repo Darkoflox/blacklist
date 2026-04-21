@@ -1,9 +1,9 @@
-name: Blacklist Parser
+name: Blacklist Parser (ЧС)
 
 on:
   schedule:
-    - cron: '0 */12 * * *'   # каждые 2 часа
-  workflow_dispatchh:
+    - cron: '0 */12 * * *'   # каждые 12 часов
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -33,6 +33,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes"
           else
-            git commit -m "🔄 Blacklist update $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git commit -m "🔄 Blacklist (ЧС) update $(date -u +'%Y-%m-%d %H:%M UTC')"
             git push
           fi
