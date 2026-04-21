@@ -13,10 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 OUTPUT_DIR = Path("public")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-MAIN_SUB = OUTPUT_DIR / "sub_black.txt"
-IOS_SUB  = OUTPUT_DIR / "sub_ios_black.txt"
-SINGBOX_SUB = OUTPUT_DIR / "sub_singbox_black.json"
-STATS = OUTPUT_DIR / "stats_black.json"
+MAIN_SUB = OUTPUT_DIR / "sub.txt"
+IOS_SUB = OUTPUT_DIR / "sub_ios.txt"
+SINGBOX_SUB = OUTPUT_DIR / "sub_singbox.json"
+STATS = OUTPUT_DIR / "stats.json"
 
 SOURCES_FILE = Path("sources/sources.txt")
 
@@ -80,7 +80,7 @@ def rename_config(link):
     except:
         sni = ""
 
-    name = f"{protocol}-{transport}-{sni}-Black-#Kfg-analyzer" if transport else f"{protocol}-Black-#Kfg-analyzer"
+    name = f"{protocol}-{transport}-{sni}-#Kfg" if transport else f"{protocol}-#Kfg"
     name = re.sub(r'-+', '-', name).strip('-')
 
     if link.startswith("vmess://"):
@@ -107,35 +107,27 @@ def priority_key(link):
     return 20
 
 def main():
-    print("🚀 Blacklist Parser v7.3 (для чёрных списков) запущен")
+    print("🚀 Kfg-Lists Parser запущен")
 
     with open(SOURCES_FILE, 'r', encoding='utf-8') as f:
         sources = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-
-    print(f"📋 Всего источников: {len(sources)}")
 
     all_configs = []
     with ThreadPoolExecutor(max_workers=15) as executor:
         future_to_src = {executor.submit(fetch, src): src for src in sources}
         for future in as_completed(future_to_src):
-            src = future_to_src[future]
             content = future.result()
             if content:
                 text = content.decode('utf-8', errors='ignore')
-                if 't.me' in src:
+                if 't.me' in future_to_src[future]:
                     pat = r'(vmess://|vless://|trojan://|ss://|ssr://|hysteria2://|tuic://)[^\s<>"\']+'
-                    found = re.findall(pat, text)
-                    all_configs.extend(found)
-                    print(f"   ↳ TG: найдено {len(found)}")
+                    all_configs.extend(re.findall(pat, text))
                 else:
                     lines = [l.strip() for l in text.splitlines() if any(l.startswith(p + "://") for p in SUPPORTED)]
                     all_configs.extend(lines)
-                    print(f"   ↳ File: {len(lines)}")
 
     unique_raw = {config_hash(link): link for link in all_configs if any(link.startswith(p + "://") for p in SUPPORTED)}
-    print(f"📦 Уникальных конфигов: {len(unique_raw)}")
 
-    print("🔍 Этап 1: TCP-проверка...")
     candidates = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_link = {executor.submit(tcp_check, link): link for link in unique_raw.values()}
@@ -143,17 +135,12 @@ def main():
             if future.result():
                 candidates.append(future_to_link[future])
 
-    print(f"   Прошло TCP: {len(candidates)}")
-
-    print("🔍 Этап 2: Полная проверка...")
     working = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_link = {executor.submit(full_check, link): link for link in candidates[:3000]}
         for future in as_completed(future_to_link):
             if future.result():
                 working.append(future_to_link[future])
-
-    print(f"✅ Прошло проверку: {len(working)}")
 
     valid = [rename_config(link) for link in working]
     valid.sort(key=priority_key, reverse=True)
@@ -162,7 +149,6 @@ def main():
     ios_configs = valid[:50]
 
     if len(android_configs) < 400:
-        print("⚠️ Мало рабочих — беру из TCP")
         fallback = [rename_config(link) for link in candidates[:2000]]
         android_configs = fallback
         ios_configs = fallback[:50]
@@ -171,16 +157,15 @@ def main():
     IOS_SUB.write_text(base64.b64encode('\n'.join(ios_configs).encode()).decode())
 
     with open(SINGBOX_SUB, 'w', encoding='utf-8') as f:
-        json.dump({"outbounds": [{"type": "urltest", "tag": "Kfg-Black", "outbounds": android_configs}]}, f, indent=2)
+        json.dump({"outbounds": [{"type": "urltest", "tag": "Kfg", "outbounds": android_configs}]}, f, indent=2)
 
     stats = {
-        "total_android": len(android_configs),
-        "ios_top50": len(ios_configs),
+        "total": len(android_configs),
         "last_update": datetime.now().strftime("%Y-%m-%d %H:%M UTC")
     }
     json.dump(stats, open(STATS, 'w'), indent=2)
 
-    print(f"✅ Blacklist готов! Android: {len(android_configs)} | iOS: {len(ios_configs)}")
+    print(f"✅ Готово! Всего: {len(android_configs)}")
 
 if __name__ == "__main__":
     main()
