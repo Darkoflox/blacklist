@@ -25,14 +25,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # убираем cache: 'pip', чтобы не требовался requirements.txt
-      
+
       - name: 📦 Install dependencies
         run: pip install requests
 
       - name: 🚀 Run parser
-        run: python parser.py   # убедись, что файл называется именно так
-        continue-on-error: false  # явно говорим, что ошибка здесь должна останавливать выполнение
+        run: python blacklist_parser.py   # <-- ИСПРАВЛЕНО ИМЯ ФАЙЛА
 
       - name: 🔄 Update README with stats
         run: |
