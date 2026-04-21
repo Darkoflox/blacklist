@@ -1,37 +1,40 @@
 import requests
 import datetime
 
-# URL for the hosts file
+# Новый рабочий URL для hosts файла
 url = "https://raw.githubusercontent.com/Ultimate-Hosts-Blacklist/Ultimate.Hosts.Blacklist/master/hosts.txt"
 
-# Get the content of the hosts file
-response = requests.get(url)
-hosts_content = response.text
+# Загружаем содержимое файла
+try:
+    response = requests.get(url)
+    response.raise_for_status()  # Остановит скрипт с ошибкой, если сайт вернет 404 или другую ошибку
+    hosts_content = response.text
+except Exception as e:
+    print(f"Ошибка при загрузке: {e}")
+    exit(1)
 
-# Split the content into lines
 lines = hosts_content.split('\n')
+domains = []
 
-# Find the start and end of the relevant section
-start_index = -1
-end_index = -1
-for i, line in enumerate(lines):
-    if "Start of entries" in line:
-        start_index = i + 1
-    elif "End of entries" in line:
-        end_index = i
-        break
+# Извлекаем домены, пропуская комментарии и пустые строки
+for line in lines:
+    line = line.strip()
+    if not line or line.startswith('#'):
+        continue
+    
+    parts = line.split()
+    # Убеждаемся, что в строке есть как минимум IP и домен
+    if len(parts) >= 2:
+        ip = parts[0]
+        domain = parts[1]
+        # Берем только блокирующие записи (0.0.0.0 или 127.0.0.1)
+        if ip in ['0.0.0.0', '127.0.0.1'] and domain not in ['localhost', 'localhost.localdomain', 'local', 'broadcasthost']:
+            domains.append(domain)
 
-# Extract the domains
-if start_index != -1 and end_index != -1:
-    domain_lines = lines[start_index:end_index]
-    domains = [line.split()[1] for line in domain_lines if len(line.split()) > 1]
-else:
-    domains = []
-
-# Get the current date and time
+# Получаем текущую дату и время
 current_datetime = datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
 
-# Format the output
+# Формируем итоговый текст
 output_content = f"""# Title: BlockList
 # Description: This is a list of domains to be blocked, updated on {current_datetime}
 # Last modified: {current_datetime}
@@ -40,8 +43,8 @@ output_content = f"""# Title: BlockList
 #==================================================================\n"""
 output_content += "\n".join(domains)
 
-# Write the formatted content to blacklist.txt
-with open("blacklist.txt", "w") as file:
+# Записываем все в файл
+with open("blacklist.txt", "w", encoding="utf-8") as file:
     file.write(output_content)
 
-print("blacklist.txt file has been generated successfully.")
+print(f"blacklist.txt file has been generated successfully. Total domains: {len(domains)}")
