@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 OUTPUT_DIR = Path("public")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-MAIN_SUB = OUTPUT_DIR / "sub_black.txt"      # Основная подписка для чёрных списков
+MAIN_SUB = OUTPUT_DIR / "sub_black.txt"
 IOS_SUB  = OUTPUT_DIR / "sub_ios_black.txt"
 SINGBOX_SUB = OUTPUT_DIR / "sub_singbox_black.json"
 STATS = OUTPUT_DIR / "stats_black.json"
@@ -107,7 +107,7 @@ def priority_key(link):
     return 20
 
 def main():
-    print("🚀 Blacklist Parser v7.3 (для чёрных списков / Wi-Fi) запущен")
+    print("🚀 Blacklist Parser v7.3 (для чёрных списков) запущен")
 
     with open(SOURCES_FILE, 'r', encoding='utf-8') as f:
         sources = [line.strip() for line in f if line.strip() and not line.startswith('#')]
@@ -135,8 +135,7 @@ def main():
     unique_raw = {config_hash(link): link for link in all_configs if any(link.startswith(p + "://") for p in SUPPORTED)}
     print(f"📦 Уникальных конфигов: {len(unique_raw)}")
 
-    # Этап 1 — TCP
-    print("🔍 Этап 1: Быстрая TCP-проверка...")
+    print("🔍 Этап 1: TCP-проверка...")
     candidates = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_link = {executor.submit(tcp_check, link): link for link in unique_raw.values()}
@@ -146,7 +145,6 @@ def main():
 
     print(f"   Прошло TCP: {len(candidates)}")
 
-    # Этап 2 — лёгкая проверка
     print("🔍 Этап 2: Полная проверка...")
     working = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -164,7 +162,7 @@ def main():
     ios_configs = valid[:50]
 
     if len(android_configs) < 400:
-        print("⚠️ Мало рабочих — беру из TCP-кандидатов")
+        print("⚠️ Мало рабочих — беру из TCP")
         fallback = [rename_config(link) for link in candidates[:2000]]
         android_configs = fallback
         ios_configs = fallback[:50]
