@@ -22,7 +22,4 @@
   - Последнее обновление: **{{last_update}}**
   
   ---
-  
-  Поддерживаемые клиенты:  
-  v2RayNG • Hiddify • Nekobox • Streisand • Shadowrocket • Karing • Happ и другие
 </div>
