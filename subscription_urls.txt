@@ -3,6 +3,7 @@ https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_android.txt
 https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_ios.txt
 https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_all_checked.txt
 https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_ss.txt
+https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_hysteria2.txt
 https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_trojan.txt
 
 # Обходные ссылки (для регионов с блокировкой raw.githubusercontent.com)
@@ -18,6 +19,9 @@ https://cdn.jsdelivr.net/gh/Darkoflox/wifi-parser@main/sub_all_checked.txt
 # sub_ss.txt
 https://cdn.statically.io/gh/Darkoflox/wifi-parser/main/sub_ss.txt
 https://cdn.jsdelivr.net/gh/Darkoflox/wifi-parser@main/sub_ss.txt
+# sub_hysteria2.txt
+https://cdn.statically.io/gh/Darkoflox/wifi-parser/main/sub_hysteria2.txt
+https://cdn.jsdelivr.net/gh/Darkoflox/wifi-parser@main/sub_hysteria2.txt
 # sub_trojan.txt
 https://cdn.statically.io/gh/Darkoflox/wifi-parser/main/sub_trojan.txt
 https://cdn.jsdelivr.net/gh/Darkoflox/wifi-parser@main/sub_trojan.txt
