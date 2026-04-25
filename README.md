@@ -1,25 +1,32 @@
-<div align="center">
-  <h1>Kfg-Lists</h1>
-  <p><strong>Актуальные конфигурации • Автообновление каждые 12 часов</strong></p>
+# Wi‑Fi Parser (ЧС)
 
-  ![Last Update](https://img.shields.io/badge/Последнее_обновление-2026-04-21%2020:47%20UTC-brightgreen)
-  
-  ### Подписки
+Генератор подписок для домашних Wi‑Fi сетей.  
+Собирает конфигурации из публичных источников и Telegram‑каналов, проверяет их работоспособность и формирует удобные списки для импорта в VPN‑клиенты.
 
-  **📱 Android**  
-  [sub.txt](https://raw.githubusercontent.com/Darkoflox/Kfg-Lists/main/public/sub.txt)
+## 🚀 Возможности
 
-  **🍎 iOS**  
-  [sub_ios.txt](https://raw.githubusercontent.com/Darkoflox/Kfg-Lists/main/public/sub_ios.txt)
+- Сбор из URL‑подписок (`sources.txt`) и Telegram‑каналов (`sources_tg.txt`).
+- Двухэтапная проверка TCP+TLS.
+- Без фильтрации по странам – используются любые доступные серверы.
+- Ограничения: Android ≤5000 конфигураций, iOS ≤300.
+- Автоматическое обновление каждые 6 часов через GitHub Actions.
 
-  **Sing-Box**  
-  [sub_singbox.json](https://raw.githubusercontent.com/Darkoflox/Kfg-Lists/main/public/sub_singbox.json)
+## 🔗 Готовые подписки
 
-  ---
-  
-  **Статистика**
-  - Всего конфигураций: **2000**
-  - Последнее обновление: **2026-04-21 20:47 UTC**
-  
-  ---
-</div>
+- Android: `https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_android.txt`
+- iOS: `https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_ios.txt`
+- Все проверенные: `https://raw.githubusercontent.com/Darkoflox/wifi-parser/main/sub_all_checked.txt`
+
+## 📦 Структура
+
+- `parser.py` – основной скрипт.
+- `sources.txt` – список URL‑источников.
+- `sources_tg.txt` – список Telegram‑каналов (опционально).
+- `requirements.txt` – зависимости.
+- `.github/workflows/update.yml` – автоматизация.
+
+## ⚙️ Запуск вручную
+
+```bash
+pip install -r requirements.txt
+python parser.py --threads 40 --strategy diverse
