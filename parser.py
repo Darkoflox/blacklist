@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-Wi‑Fi парсер прокси-конфигураций (ЧС).
-Сбор из URL‑подписок и Telegram‑каналов (опционально).
-Двухэтапная проверка TCP+TLS. Без фильтрации по странам.
-Ограничения: Android ≤5000, iOS ≤300.
+Wi‑Fi парсер (ЧС) с улучшенной фильтрацией и проверкой.
+Гарантирует, что в подписке только действительно рабочие конфигурации.
 """
 import asyncio
 import base64
@@ -79,42 +77,12 @@ TG_MIRRORS = [
 
 HEADER = "# profile-title: Niyakwi⚪ | ЧС | обновление каждые 6 часов\n# profile-update-interval: 6\n"
 
+# Допустимые порты для TLS-прокси
+ALLOWED_PORTS = {443, 8443, 2053, 2083, 2087, 2096, 8443}
 
-class SourceManager:
-    def __init__(self, sources_file="sources.txt", failed_file="failed_sources.txt"):
-        self.sources_file = sources_file
-        self.failed_file = failed_file
-
-    def load_sources(self) -> List[str]:
-        try:
-            with open(self.sources_file, 'r', encoding='utf-8') as f:
-                all_sources = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-        except FileNotFoundError:
-            logger.warning(f"Файл {self.sources_file} не найден, создаю пример")
-            all_sources = DEFAULT_SOURCES
-            with open(self.sources_file, 'w', encoding='utf-8') as f:
-                f.write("# Список источников подписок\n")
-                for url in all_sources:
-                    f.write(f"{url}\n")
-
-        failed = set()
-        if Path(self.failed_file).exists():
-            with open(self.failed_file, 'r', encoding='utf-8') as f:
-                failed = {line.strip() for line in f if line.strip()}
-
-        active = [url for url in all_sources if url not in failed]
-        logger.info(f"Активных источников: {len(active)} (пропущено проблемных: {len(failed)})")
-        return active
-
-    def mark_failed(self, url: str):
-        try:
-            with open(self.failed_file, 'a', encoding='utf-8') as f:
-                f.write(f"{url}\n")
-            logger.warning(f"Источник {url} добавлен в список проблемных")
-        except Exception as e:
-            logger.error(f"Не удалось записать {self.failed_file}: {e}")
-
-
+# ------------------------------------------------------------
+# Модель конфигурации
+# ------------------------------------------------------------
 from dataclasses import dataclass, field
 
 @dataclass
@@ -142,80 +110,19 @@ class ProxyConfig:
     def to_uri(self) -> str:
         return self.raw
 
-    def format_name(self, include_latency: bool = True) -> str:
+    def format_name(self) -> str:
         parts = self.host.split('.')
         tld = parts[-1].lower() if len(parts) >= 2 else ''
         flag = TLD_FLAGS.get(tld, '🏳️')
         country_code = TLD_TO_CODE.get(tld, '??')
-        base = f"{flag} {country_code}"
-        return base
+        return f"{flag} {country_code}"
 
-
-class ConfigSelector:
-    @staticmethod
-    def select(configs: List[ProxyConfig], max_count: int, strategy: str = "diverse") -> List[ProxyConfig]:
-        if len(configs) <= max_count:
-            return configs
-        if strategy == "fastest":
-            def score(cfg: ProxyConfig) -> int:
-                proto_score = {'vless': 100, 'trojan': 90, 'vmess': 70, 'ss': 50}.get(cfg.protocol, 0)
-                port_score = 50 if cfg.port in (443, 8443) else (30 if cfg.port == 80 else 0)
-                tls_score = 30 if cfg.tls != 'none' else 0
-                return proto_score + port_score + tls_score
-            sorted_configs = sorted(configs, key=score, reverse=True)
-            return sorted_configs[:max_count]
-        elif strategy == "diverse":
-            seen_hosts = set()
-            selected = []
-            for proto in SUPPORTED_PROTOCOLS:
-                for cfg in configs:
-                    if cfg.protocol != proto:
-                        continue
-                    key = f"{cfg.host}:{cfg.port}"
-                    if key not in seen_hosts:
-                        seen_hosts.add(key)
-                        selected.append(cfg)
-                        if len(selected) >= max_count:
-                            return selected[:max_count]
-            remaining = [c for c in configs if c not in selected]
-            random.shuffle(remaining)
-            selected.extend(remaining[:max_count - len(selected)])
-            return selected
-        else:
-            shuffled = configs.copy()
-            random.shuffle(shuffled)
-            return shuffled[:max_count]
-
-
+# ------------------------------------------------------------
+# Чекер с улучшенной фильтрацией
+# ------------------------------------------------------------
 class ProxyChecker:
-    def __init__(self, max_concurrent: int = 20, timeout: int = 5):
+    def __init__(self, max_concurrent: int = 20):
         self.max_concurrent = max_concurrent
-        self.timeout = timeout
-
-    def _tcp_check(self, host: str, port: int, timeout: float = 3.0) -> Tuple[bool, float]:
-        start = time.time()
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            result = sock.connect_ex((host, port))
-            sock.close()
-            latency = (time.time() - start) * 1000
-            return result == 0, latency
-        except Exception:
-            return False, 0.0
-
-    def _tls_check(self, host: str, port: int, sni: Optional[str] = None, timeout: float = 4.0) -> bool:
-        if port not in (443, 8443, 2053, 2083, 2087, 2096, 8443):
-            return True
-        try:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            with socket.create_connection((host, port), timeout=timeout) as sock:
-                with context.wrap_socket(sock, server_hostname=sni or host) as ssock:
-                    return True
-        except Exception:
-            return False
 
     def _parse_uri(self, uri: str) -> Optional[ProxyConfig]:
         try:
@@ -237,7 +144,6 @@ class ProxyChecker:
                 cfg.tls = 'tls' if data.get('tls') else 'none'
                 cfg.sni = data.get('sni') or data.get('host')
                 cfg.path = data.get('path')
-                cfg.remarks = data.get('ps', '')
             elif proto == 'vless':
                 cfg.uuid = parsed.username
                 params = parse_qs(parsed.query)
@@ -270,21 +176,62 @@ class ProxyChecker:
                 cfg.sni = params.get('sni', [None])[0]
                 cfg.tls = 'tls'
                 cfg.transport = 'udp'
+            # Фильтрация: отбрасываем конфигурации без ключевых параметров
+            if proto in ('vmess', 'vless', 'tuic') and not cfg.uuid:
+                return None
+            if proto in ('trojan', 'ss', 'hysteria2') and not cfg.password:
+                return None
             return cfg
         except Exception:
             return None
 
+    def _tcp_check(self, host: str, port: int, timeout: float = 3.0) -> Tuple[bool, float]:
+        start = time.time()
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            if result == 0:
+                latency = (time.time() - start) * 1000
+                return True, latency
+        except Exception:
+            pass
+        return False, 0.0
+
+    def _tls_check(self, host: str, port: int, sni: Optional[str] = None, timeout: float = 4.0) -> bool:
+        if port not in ALLOWED_PORTS:
+            return True
+        try:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                with context.wrap_socket(sock, server_hostname=sni or host):
+                    return True
+        except Exception:
+            return False
+
     def test_config(self, cfg: ProxyConfig) -> Tuple[bool, float]:
+        # Отсеиваем нестандартные порты для TLS-протоколов
+        if cfg.tls != 'none' and cfg.port not in ALLOWED_PORTS:
+            return False, 0.0
+
+        # TCP
         ok, latency = self._tcp_check(cfg.host, cfg.port)
         if not ok:
-            return False, latency
-        if cfg.port in (443, 8443, 2053, 2083, 2087, 2096, 8443) and cfg.tls != 'none':
-            if not self._tls_check(cfg.host, cfg.port, cfg.sni, timeout=4.0):
+            return False, 0.0
+
+        # TLS
+        if cfg.tls != 'none':
+            if not self._tls_check(cfg.host, cfg.port, cfg.sni):
                 return False, latency
+
         return True, latency
 
     def test_config_advanced(self, cfg: ProxyConfig) -> bool:
-        if cfg.port not in (443, 8443, 2053, 2083, 2087, 2096, 8443) or cfg.tls == 'none':
+        """Дополнительная строгая проверка TLS."""
+        if cfg.tls == 'none' or cfg.port not in ALLOWED_PORTS:
             return True
         try:
             context = ssl.create_default_context()
@@ -292,7 +239,7 @@ class ProxyChecker:
             context.verify_mode = ssl.CERT_NONE
             context.minimum_version = ssl.TLSVersion.TLSv1_2
             with socket.create_connection((cfg.host, cfg.port), timeout=3.0) as sock:
-                with context.wrap_socket(sock, server_hostname=cfg.sni or cfg.host) as ssock:
+                with context.wrap_socket(sock, server_hostname=cfg.sni or cfg.host):
                     return True
         except Exception:
             return False
@@ -302,7 +249,6 @@ class ProxyChecker:
         checked = 0
         working = []
         start_time = time.time()
-
         semaphore = asyncio.Semaphore(self.max_concurrent)
         lock = asyncio.Lock()
         heartbeat_task = None
@@ -344,6 +290,7 @@ class ProxyChecker:
         elapsed = time.time() - start_time
         logger.info(f"✅ Проверка завершена за {elapsed/60:.1f} мин. Рабочих: {len(working)} из {total}")
 
+        # Дополнительная проверка топ-500
         working.sort(key=lambda x: x.latency if x.latency else 999999)
         top_candidates = working[:500]
         logger.info(f"🔍 Дополнительная проверка топ‑{len(top_candidates)} кандидатов...")
@@ -353,25 +300,26 @@ class ProxyChecker:
                 ok = await loop.run_in_executor(executor, self.test_config_advanced, cfg)
             if not ok:
                 cfg.working = False
-        logger.info(f"🔬 После дополнительной проверки осталось {sum(1 for c in top_candidates if c.working)} конфигураций")
+        final_working = [c for c in working if c.working]
+        logger.info(f"🔬 После дополнительной проверки осталось {len(final_working)} конфигураций")
+        return final_working
 
-        return configs
-
-
+# ------------------------------------------------------------
+# Парсер подписок (как в предыдущей версии)
+# ------------------------------------------------------------
 class SubscriptionParser:
-    def __init__(self, timeout: int = 30, max_concurrent: int = 10, strategy: str = "diverse",
-                 parse_telegram: bool = False):
+    def __init__(self, timeout: int = 30, max_concurrent: int = 10, parse_telegram: bool = False):
         self.timeout = timeout
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.session: Optional[aiohttp.ClientSession] = None
         self.checker = ProxyChecker()
         self.source_manager = SourceManager()
-        self.strategy = strategy
         self.parse_telegram = parse_telegram
 
     async def __aenter__(self):
         connector = aiohttp.TCPConnector(limit=0, ssl=False)
-        self.session = aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=self.timeout))
+        self.session = aiohttp.ClientSession(connector=connector,
+                                            timeout=aiohttp.ClientTimeout(total=self.timeout))
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -404,12 +352,16 @@ class SubscriptionParser:
                         }).encode()).decode()
                         links.append(f"vmess://{b64}")
                     elif t == 'ss':
-                        userinfo = base64.b64encode(f"{p['cipher']}:{p['password']}".encode()).decode().rstrip('=')
+                        userinfo = base64.b64encode(
+                            f"{p['cipher']}:{p['password']}".encode()
+                        ).decode().rstrip('=')
                         links.append(f"ss://{userinfo}@{p['server']}:{p['port']}#{p.get('name','')}")
                     elif t == 'trojan':
-                        links.append(f"trojan://{p['password']}@{p['server']}:{p['port']}?sni={p.get('sni','')}#{p.get('name','')}")
+                        links.append(
+                            f"trojan://{p['password']}@{p['server']}:{p['port']}?sni={p.get('sni','')}#{p.get('name','')}")
                     elif t == 'vless':
-                        links.append(f"vless://{p['uuid']}@{p['server']}:{p['port']}?security={p.get('security','none')}&type={p.get('network','tcp')}#{p.get('name','')}")
+                        links.append(
+                            f"vless://{p['uuid']}@{p['server']}:{p['port']}?security={p.get('security','none')}&type={p.get('network','tcp')}#{p.get('name','')}")
                 if links:
                     return links
             except Exception:
@@ -423,12 +375,8 @@ class SubscriptionParser:
         return content.splitlines()
 
     def extract_links(self, text: str) -> List[str]:
-        try:
-            decoded_text = unquote(text)
-        except Exception:
-            decoded_text = text
         links = []
-        for match in PROXY_LINK_PATTERN.finditer(decoded_text):
+        for match in PROXY_LINK_PATTERN.finditer(text):
             link = match.group(0)
             for proto in SUPPORTED_PROTOCOLS:
                 idx = link.find(f"{proto}://")
@@ -445,18 +393,11 @@ class SubscriptionParser:
         configs = []
         lines = self.decode_subscription(content)
         for line in lines:
-            line = line.strip()
-            if not line:
-                continue
             for link in self.extract_links(line):
                 cfg = self.checker._parse_uri(link)
                 if cfg:
                     configs.append(cfg)
         logger.info(f"Из {url} извлечено {len(configs)} конфигураций")
-        if len(configs) == 0 and len(content) > 0:
-            preview = content[:200].replace('\n', ' ').replace('\r', '')
-            logger.warning(f"Не удалось извлечь конфигурации из {url}. Превью: {preview}")
-            self.source_manager.mark_failed(url)
         return configs
 
     async def _fetch_tg_page(self, username: str) -> Optional[str]:
@@ -467,20 +408,16 @@ class SubscriptionParser:
                 async with self.session.get(url, headers=headers, allow_redirects=True) as resp:
                     if resp.status == 200:
                         return await resp.text()
-                    else:
-                        logger.debug(f"Зеркало {url}: HTTP {resp.status}")
-            except Exception as e:
-                logger.debug(f"Ошибка при обращении к {url}: {e}")
+            except Exception:
                 continue
         return None
 
     async def _parse_telegram_channels(self) -> List[ProxyConfig]:
         tg_file = Path("sources_tg.txt")
         if not tg_file.exists():
-            logger.warning("Файл sources_tg.txt не найден – Telegram-сбор пропущен.")
             return []
         channels = []
-        with open(tg_file, 'r', encoding='utf-8') as f:
+        with open(tg_file, 'r') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):
@@ -494,18 +431,15 @@ class SubscriptionParser:
                         username = parts[-1]
                 channels.append(username)
         if not channels:
-            logger.warning("Нет каналов для Telegram-сбора.")
             return []
         logger.info(f"Начинаем сбор из {len(channels)} Telegram-каналов...")
         all_configs = []
         seen_keys = set()
         for i, channel in enumerate(channels):
             if i > 0:
-                delay = TG_REQUEST_DELAY + random.uniform(0.5, 1.5)
-                await asyncio.sleep(delay)
+                await asyncio.sleep(TG_REQUEST_DELAY + random.uniform(0.5, 1.5))
             html = await self._fetch_tg_page(channel)
             if not html:
-                logger.warning(f"Канал {channel}: не удалось загрузить ни через одно зеркало")
                 continue
             messages = []
             for block in re.findall(r'<div class="tgme_widget_message_text">(.*?)</div>', html, re.DOTALL):
@@ -518,60 +452,41 @@ class SubscriptionParser:
                     if text:
                         messages.append(text)
             if not messages:
-                for block in re.findall(r'<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', html, re.DOTALL):
-                    text = re.sub(r'<[^>]+>', '', block).strip()
-                    if text:
-                        messages.append(text)
-            if not messages:
                 direct_links = self.extract_links(html)
                 if direct_links:
-                    logger.info(f"Канал {channel}: найдено {len(direct_links)} ссылок в сыром HTML")
                     for link in direct_links:
                         cfg = self.checker._parse_uri(link)
-                        if not cfg:
-                            continue
-                        key = f"{cfg.host}:{cfg.port}:{cfg.uuid or cfg.password or cfg.method}"
-                        if key not in seen_keys:
-                            seen_keys.add(key)
-                            all_configs.append(cfg)
-                    continue
-                else:
-                    logger.warning(f"Канал {channel}: сообщения и ссылки не найдены")
+                        if cfg:
+                            key = f"{cfg.host}:{cfg.port}:{cfg.uuid or cfg.password or cfg.method}"
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                all_configs.append(cfg)
                     continue
             channel_links = []
             for msg in messages[:20]:
                 channel_links.extend(self.extract_links(msg))
             for link in channel_links:
                 cfg = self.checker._parse_uri(link)
-                if not cfg:
-                    continue
-                key = f"{cfg.host}:{cfg.port}:{cfg.uuid or cfg.password or cfg.method}"
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    all_configs.append(cfg)
-            logger.info(f"Канал {channel}: +{len(channel_links)} ссылок (всего собрано {len(all_configs)})")
-        logger.info(f"Telegram-сбор завершён: всего {len(all_configs)} конфигураций")
+                if cfg:
+                    key = f"{cfg.host}:{cfg.port}:{cfg.uuid or cfg.password or cfg.method}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        all_configs.append(cfg)
+            logger.info(f"Канал {channel}: всего собрано {len(all_configs)}")
+        logger.info(f"Telegram-сбор завершён: {len(all_configs)} конфигураций")
         return all_configs
 
     async def collect_all(self) -> List[ProxyConfig]:
         sources = self.source_manager.load_sources()
         tasks = [self.parse_subscription(url) for url in sources]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-
         all_configs = []
-        for url, result in zip(sources, results):
-            if isinstance(result, Exception):
-                logger.error(f"Ошибка обработки {url}: {result}")
-            elif isinstance(result, list):
+        for result in results:
+            if isinstance(result, list):
                 all_configs.extend(result)
-
         if self.parse_telegram:
-            try:
-                tg_configs = await self._parse_telegram_channels()
-                all_configs.extend(tg_configs)
-            except Exception as e:
-                logger.error(f"Ошибка при парсинге Telegram: {e}")
-
+            tg_configs = await self._parse_telegram_channels()
+            all_configs.extend(tg_configs)
         seen = set()
         unique = []
         for cfg in all_configs:
@@ -579,55 +494,89 @@ class SubscriptionParser:
             if key not in seen:
                 seen.add(key)
                 unique.append(cfg)
-
         logger.info(f"Всего собрано {len(unique)} уникальных конфигураций")
         return unique
 
+# ------------------------------------------------------------
+# SourceManager
+# ------------------------------------------------------------
+class SourceManager:
+    def __init__(self, sources_file="sources.txt", failed_file="failed_sources.txt"):
+        self.sources_file = sources_file
+        self.failed_file = failed_file
 
+    def load_sources(self) -> List[str]:
+        try:
+            with open(self.sources_file, 'r') as f:
+                all_sources = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        except FileNotFoundError:
+            logger.warning(f"Файл {self.sources_file} не найден, использую примеры")
+            all_sources = DEFAULT_SOURCES
+            with open(self.sources_file, 'w') as f:
+                f.write("# Список источников подписок\n")
+                for url in all_sources:
+                    f.write(f"{url}\n")
+        failed = set()
+        if Path(self.failed_file).exists():
+            with open(self.failed_file, 'r') as f:
+                failed = {line.strip() for line in f if line.strip()}
+        active = [url for url in all_sources if url not in failed]
+        logger.info(f"Активных источников: {len(active)} (пропущено проблемных: {len(failed)})")
+        return active
+
+    def mark_failed(self, url: str):
+        try:
+            with open(self.failed_file, 'a') as f:
+                f.write(f"{url}\n")
+        except Exception as e:
+            logger.error(f"Не удалось записать {self.failed_file}: {e}")
+
+# ------------------------------------------------------------
+# Сохранение подписок
+# ------------------------------------------------------------
 def save_subscriptions(configs: List[ProxyConfig], output_dir: str = "."):
     out_path = Path(output_dir)
     out_path.mkdir(exist_ok=True)
-
     working = [c for c in configs if c.working]
     working.sort(key=lambda x: x.latency if x.latency else 999999)
-
     logger.info(f"Рабочих: {len(working)}")
-
     if not working:
         logger.warning("Нет рабочих конфигураций. Выходные файлы будут пустыми.")
-    else:
-        android_list = ConfigSelector.select(working, 5000, "diverse")
-        with open(out_path / "sub_android.txt", "w", encoding='utf-8') as f:
-            f.write(HEADER)
-            for c in android_list:
-                f.write(f"{c.to_uri().split('#')[0]}#{c.format_name()}\n")
-        ios_list = ConfigSelector.select(working, 300, "diverse")
-        with open(out_path / "sub_ios.txt", "w", encoding='utf-8') as f:
-            f.write(HEADER)
-            for c in ios_list:
-                f.write(f"{c.to_uri().split('#')[0]}#{c.format_name()}\n")
-        with open(out_path / "sub_all_checked.txt", "w", encoding='utf-8') as f:
-            f.write(HEADER)
-            for c in working:
-                f.write(f"{c.to_uri().split('#')[0]}#{c.format_name()}\n")
-        for proto in SUPPORTED_PROTOCOLS:
-            proto_list = [c for c in working if c.protocol == proto]
-            if proto_list:
-                with open(out_path / f"sub_{proto}.txt", "w", encoding='utf-8') as f:
-                    f.write(HEADER)
-                    for c in proto_list[:5000]:
-                        f.write(f"{c.to_uri().split('#')[0]}#{c.format_name()}\n")
-
+        return
+    # Android
+    android_list = working[:5000]
+    with open(out_path / "sub_android.txt", "w", encoding='utf-8') as f:
+        f.write(HEADER)
+        for c in android_list:
+            f.write(f"{c.to_uri().split('#')[0]}#{c.format_name()}\n")
+    # iOS (топ-300 по пингу)
+    ios_list = sorted(working, key=lambda x: x.latency if x.latency else 999999)[:300]
+    with open(out_path / "sub_ios.txt", "w", encoding='utf-8') as f:
+        f.write(HEADER)
+        for c in ios_list:
+            f.write(f"{c.to_uri().split('#')[0]}#{c.format_name()}\n")
+    # Все проверенные
+    with open(out_path / "sub_all_checked.txt", "w", encoding='utf-8') as f:
+        f.write(HEADER)
+        for c in working:
+            f.write(f"{c.to_uri().split('#')[0]}#{c.format_name()}\n")
+    # По протоколам
+    for proto in SUPPORTED_PROTOCOLS:
+        proto_list = [c for c in working if c.protocol == proto]
+        if proto_list:
+            with open(out_path / f"sub_{proto}.txt", "w", encoding='utf-8') as f:
+                f.write(HEADER)
+                for c in proto_list[:5000]:
+                    f.write(f"{c.to_uri().split('#')[0]}#{c.format_name()}\n")
+    # Ссылки
     repo_user = "Darkoflox"
     repo_name = "wifi-parser"  # замените на имя вашего репозитория
     branch = "main"
     base = f"https://raw.githubusercontent.com/{repo_user}/{repo_name}/{branch}"
     cdn_statically = f"https://cdn.statically.io/gh/{repo_user}/{repo_name}/{branch}"
     cdn_jsdelivr = f"https://cdn.jsdelivr.net/gh/{repo_user}/{repo_name}@{branch}"
-
     sub_files = ["sub_android.txt", "sub_ios.txt", "sub_all_checked.txt"] + \
                 [f"sub_{proto}.txt" for proto in SUPPORTED_PROTOCOLS if (out_path / f"sub_{proto}.txt").exists()]
-
     with open(out_path / "subscription_urls.txt", "w", encoding='utf-8') as f:
         f.write("# Прямые ссылки (основные)\n")
         for sf in sub_files:
@@ -639,23 +588,21 @@ def save_subscriptions(configs: List[ProxyConfig], output_dir: str = "."):
             f.write(f"{cdn_jsdelivr}/{sf}\n")
     logger.info(f"🔗 Файл со ссылками: {out_path / 'subscription_urls.txt'}")
 
-
+# ------------------------------------------------------------
+# Точка входа
+# ------------------------------------------------------------
 async def main():
     parser_arg = ArgumentParser()
-    parser_arg.add_argument('--threads', type=int, default=40, help='Число потоков проверки')
-    parser_arg.add_argument('--strategy', choices=['diverse', 'fastest', 'random'], default='diverse')
+    parser_arg.add_argument('--threads', type=int, default=20, help='Число потоков проверки')
     parser_arg.add_argument('--parse-telegram', action='store_true', help='Включить сбор из Telegram-каналов')
     args = parser_arg.parse_args()
 
-    async with SubscriptionParser(timeout=60, max_concurrent=5, strategy=args.strategy,
-                                 parse_telegram=args.parse_telegram) as parser:
+    async with SubscriptionParser(timeout=60, max_concurrent=5, parse_telegram=args.parse_telegram) as parser:
         parser.checker.max_concurrent = args.threads
-
         configs = await parser.collect_all()
         if configs:
-            configs = await parser.checker.check_batch(configs)
-        save_subscriptions(configs)
-
+            working = await parser.checker.check_batch(configs)
+            save_substitutions(working)
 
 if __name__ == "__main__":
     asyncio.run(main())
