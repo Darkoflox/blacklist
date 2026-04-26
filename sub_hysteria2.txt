@@ -1,4 +1,4 @@
 # profile-title: Niyakwi⚪ | ЧС | обновление каждые 6 часов
 # profile-update-interval: 6
 hysteria2://dongtaiwang.com@163.172.113.118:40022/?insecure=1&sni=www.microsoft.com#🏳️ ??
-hysteria2://123456789StrongPass@144.31.224.14:443/?insecure=1#🏳️ ??
+hysteria2://123456789StrongPass@144.31.224.14:443?insecure=1#🏳️ ??
